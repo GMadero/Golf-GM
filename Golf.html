@@ -1,0 +1,579 @@
+git clone https://github.com/GMadero/Golf-GM.git
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sistema Apuestas Nassau GEMA</title>
+  <style>
+    body { 
+      font-family: Arial, sans-serif; 
+      padding: 20px; 
+      max-width: 800px; 
+      margin: auto;
+      background-color: #f5f5f5;
+    }
+    h1, h2, h3 {
+      color: #2a5934; /* Color verde golf */
+    }
+    .section { 
+      margin-top: 20px; 
+      background-color: white;
+      padding: 15px;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    input, button, select { 
+      margin: 5px 0; 
+      padding: 8px; 
+      width: 100%; 
+      box-sizing: border-box;
+      border-radius: 4px;
+      border: 1px solid #ccc;
+    }
+    button {
+      background-color: #2a5934;
+      color: white;
+      border: none;
+      cursor: pointer;
+      font-weight: bold;
+    }
+    button:hover {
+      background-color: #1d402a;
+    }
+    table { 
+      width: 100%; 
+      border-collapse: collapse; 
+      margin-top: 10px; 
+    }
+    th, td { 
+      border: 1px solid #ccc; 
+      padding: 8px; 
+      text-align: center; 
+    }
+    th {
+      background-color: #e0e0e0;
+    }
+    .player-row {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+    .player-row input {
+      flex: 1;
+    }
+    .positive-score {
+      color: green;
+      font-weight: bold;
+    }
+    .negative-score {
+      color: red;
+      font-weight: bold;
+    }
+    .hole-par {
+      width: 40px;
+      text-align: center;
+    }
+    .press-button {
+      width: auto;
+      padding: 5px;
+      margin-left: 10px;
+      background-color: #d32f2f;
+    }
+  </style>
+</head>
+<body>
+  <h1>Sistema Apuestas Nassau GEMA</h1>
+  
+  <div class="section">
+    <h2>Configuración de la Apuesta</h2>
+    <div>
+      <label>Valor de la apuesta (pesos por Nassau):</label>
+      <input type="number" id="betAmount" value="100">
+      <label>Valor por press (pesos):</label>
+      <input type="number" id="pressAmount" value="50">
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Registro de jugadores</h2>
+    <div id="players"></div>
+    <button onclick="addPlayer()">Agregar jugador</button>
+    <button onclick="startGame()">Iniciar partida</button>
+  </div>
+  
+  <div class="section" id="gameSection" style="display:none;">
+    <h2>Ingreso de golpes</h2>
+    <div id="holeInfo"></div>
+    <label>Par del hoyo:</label>
+    <input type="number" id="holePar" min="3" max="5" value="4" class="hole-par">
+    <div id="scores"></div>
+    <button onclick="nextHole()">Siguiente hoyo</button>
+  </div>
+  
+  <div class="section" id="resultsSection" style="display:none;">
+    <h2>Tabla de Resultados</h2>
+    <table id="resultsTable">
+      <thead>
+        <tr>
+          <th>Hoyo</th>
+          <th id="parRow">Par</th>
+        </tr>
+      </thead>
+      <tbody id="resultsBody">
+      </tbody>
+    </table>
+  </div>
+  
+  <div class="section" id="nassauSection" style="display:none;">
+    <h2>Estado de Apuestas Nassau</h2>
+    <table id="nassauTable">
+      <thead>
+        <tr>
+          <th>Jugador</th>
+          <th>Front 9</th>
+          <th>Back 9</th>
+          <th>18 Hoyos</th>
+          <th>Presses</th>
+          <th>Total $</th>
+        </tr>
+      </thead>
+      <tbody id="nassauBody">
+      </tbody>
+    </table>
+  </div>
+
+  <script>
+    // Variables globales
+    let players = [];
+    let currentHole = 1;
+    const totalHoles = 18;
+    let pars = Array(totalHoles).fill(4); // Par de cada hoyo (por defecto 4)
+    let presses = []; // Registro de presses
+    
+    // Agregar un jugador nuevo
+    function addPlayer() {
+      const id = players.length + 1;
+      const container = document.createElement('div');
+      container.className = 'player-row';
+      container.innerHTML = `
+        <input placeholder="Nombre del jugador ${id}" id="name${id}">
+        <input placeholder="Hándicap" id="hcp${id}" type="number" min="0" max="36">
+      `;
+      document.getElementById('players').appendChild(container);
+    }
+    
+    // Iniciar la partida
+    function startGame() {
+      players = [];
+      let i = 1;
+      
+      // Recolectar información de los jugadores
+      while (document.getElementById(`name${i}`)) {
+        const name = document.getElementById(`name${i}`).value.trim() || `Jugador ${i}`;
+        const hcp = parseInt(document.getElementById(`hcp${i}`).value) || 0;
+        
+        if (name) {
+          players.push({ 
+            name, 
+            hcp, 
+            strokes: [], 
+            net: [],
+            totalNet: 0
+          });
+        }
+        i++;
+      }
+      
+      // Validar número de jugadores
+      if (players.length < 2) {
+        alert("Debes registrar al menos 2 jugadores.");
+        return;
+      }
+      
+      // Inicializar tabla de resultados
+      initResultsTable();
+      
+      // Mostrar secciones necesarias
+      document.getElementById('gameSection').style.display = 'block';
+      document.getElementById('resultsSection').style.display = 'block';
+      document.getElementById('nassauSection').style.display = 'block';
+      
+      // Inicializar la matriz de presses (para cada combinación de jugadores)
+      initPresses();
+      
+      // Mostrar el primer hoyo
+      showHole();
+      updateNassauTable();
+    }
+    
+    // Inicializar la tabla de resultados
+    function initResultsTable() {
+      // Agregar encabezados de jugadores
+      const headerRow = document.querySelector('#resultsTable thead tr');
+      players.forEach(player => {
+        const th = document.createElement('th');
+        th.textContent = player.name;
+        headerRow.appendChild(th);
+      });
+      
+      // Crear filas vacías para todos los hoyos
+      const tbody = document.getElementById('resultsBody');
+      tbody.innerHTML = '';
+      
+      for (let i = 1; i <= totalHoles; i++) {
+        const row = document.createElement('tr');
+        row.id = `hole${i}Row`;
+        
+        // Número de hoyo
+        const holeCell = document.createElement('td');
+        holeCell.textContent = i;
+        row.appendChild(holeCell);
+        
+        // Par del hoyo (por defecto 4)
+        const parCell = document.createElement('td');
+        parCell.textContent = pars[i-1];
+        parCell.id = `par${i}`;
+        row.appendChild(parCell);
+        
+        // Celdas para cada jugador (vacías inicialmente)
+        players.forEach((player, playerIndex) => {
+          const cell = document.createElement('td');
+          cell.id = `score_${i}_${playerIndex}`;
+          row.appendChild(cell);
+        });
+        
+        tbody.appendChild(row);
+      }
+      
+      // Agregar fila para los totales
+      const totalRow = document.createElement('tr');
+      totalRow.id = 'totalRow';
+      
+      const totalLabel = document.createElement('td');
+      totalLabel.textContent = 'TOTAL';
+      totalLabel.colSpan = 2;
+      totalLabel.style.fontWeight = 'bold';
+      totalRow.appendChild(totalLabel);
+      
+      players.forEach((player, playerIndex) => {
+        const totalCell = document.createElement('td');
+        totalCell.id = `total_${playerIndex}`;
+        totalCell.textContent = '0';
+        totalRow.appendChild(totalCell);
+      });
+      
+      tbody.appendChild(totalRow);
+    }
+    
+    // Inicializar estructura de presses
+    function initPresses() {
+      presses = [];
+      // Para cada combinación de jugadores (i,j)
+      for (let i = 0; i < players.length; i++) {
+        for (let j = i+1; j < players.length; j++) {
+          // Nassau base
+          presses.push({
+            player1: i,
+            player2: j,
+            type: 'front9',
+            holeStart: 1,
+            holeEnd: 9,
+            active: true
+          });
+          
+          presses.push({
+            player1: i,
+            player2: j,
+            type: 'back9',
+            holeStart: 10,
+            holeEnd: 18,
+            active: true
+          });
+          
+          presses.push({
+            player1: i,
+            player2: j,
+            type: 'total18',
+            holeStart: 1,
+            holeEnd: 18,
+            active: true
+          });
+          
+          // Presses adicionales se agregarán dinámicamente
+        }
+      }
+    }
+    
+    // Mostrar información del hoyo actual
+    function showHole() {
+      document.getElementById('holeInfo').innerHTML = `<h3>Hoyo ${currentHole}</h3>`;
+      
+      // Verificar si ya tenemos un par registrado para este hoyo
+      if (pars[currentHole-1]) {
+        document.getElementById('holePar').value = pars[currentHole-1];
+      }
+      
+      // Crear campos para ingresar golpes de cada jugador
+      let html = '';
+      players.forEach((p, idx) => {
+        html += `
+          <div style="display: flex; align-items: center; margin-bottom: 10px;">
+            <label style="width: 150px;">${p.name}:</label>
+            <input type="number" id="stroke${idx}" placeholder="Golpes" min="1" max="15" style="width: 80px;">
+        `;
+        
+        // Agregar botones de press solo si no estamos en el último hoyo
+        if (currentHole < totalHoles) {
+          html += `<button class="press-button" onclick="addPress(${idx})">Press</button>`;
+        }
+        
+        html += `</div>`;
+      });
+      
+      document.getElementById('scores').innerHTML = html;
+    }
+    
+    // Avanzar al siguiente hoyo
+    function nextHole() {
+      // Guardar el par del hoyo actual
+      pars[currentHole-1] = parseInt(document.getElementById('holePar').value) || 4;
+      document.getElementById(`par${currentHole}`).textContent = pars[currentHole-1];
+      
+      // Guardar los golpes de cada jugador
+      players.forEach((p, idx) => {
+        const strokes = parseInt(document.getElementById(`stroke${idx}`).value);
+        if (isNaN(strokes)) {
+          alert(`Por favor ingresa los golpes para ${p.name}`);
+          return;
+        }
+        
+        // Guardar golpes brutos
+        p.strokes[currentHole-1] = strokes;
+        
+        // Calcular golpes netos (con hándicap distribuido)
+        const holeHcp = getHoleHandicap(p.hcp, currentHole);
+        const netStrokes = strokes - holeHcp;
+        p.net[currentHole-1] = netStrokes;
+        
+        // Actualizar la tabla de resultados
+        const cell = document.getElementById(`score_${currentHole}_${idx}`);
+        cell.textContent = `${strokes}/${netStrokes}`;
+        
+        // Calcular total neto hasta ahora
+        p.totalNet = p.net.reduce((sum, stroke) => sum + stroke, 0);
+        document.getElementById(`total_${idx}`).textContent = p.totalNet;
+      });
+      
+      // Actualizar tabla de Nassau
+      updateNassauTable();
+      
+      // Avanzar al siguiente hoyo o finalizar
+      if (currentHole < totalHoles) {
+        currentHole++;
+        showHole();
+      } else {
+        document.getElementById('gameSection').style.display = 'none';
+        alert("¡Partida finalizada! Revisa los resultados en las tablas.");
+      }
+    }
+    
+    // Distribuir hándicap por hoyo (simplificado)
+    function getHoleHandicap(totalHcp, holeNumber) {
+      // Distribuir el hándicap entre los 18 hoyos
+      // Para simplificar, asumimos distribución uniforme
+      const hcpPerHole = totalHcp / 18;
+      return Math.round(hcpPerHole);
+    }
+    
+    // Agregar un press para un jugador
+    function addPress(playerIndex) {
+      if (currentHole >= totalHoles) return;
+      
+      // Cuando un jugador solicita un press, encontramos todas las apuestas activas
+      // donde este jugador está involucrado y creamos nuevos presses
+      for (let i = 0; i < players.length; i++) {
+        if (i === playerIndex) continue;
+        
+        // Identificar qué segmento aplica según el hoyo actual
+        let pressType;
+        let holeStart = currentHole;
+        let holeEnd;
+        
+        if (currentHole <= 9) {
+          pressType = 'front9_press';
+          holeEnd = 9;
+        } else {
+          pressType = 'back9_press';
+          holeEnd = 18;
+        }
+        
+        // Crear un nuevo press
+        const newPress = {
+          player1: Math.min(playerIndex, i),
+          player2: Math.max(playerIndex, i),
+          type: pressType,
+          holeStart: holeStart,
+          holeEnd: holeEnd,
+          active: true,
+          initiator: playerIndex
+        };
+        
+        presses.push(newPress);
+      }
+      
+      alert(`¡${players[playerIndex].name} ha iniciado un press en el hoyo ${currentHole}!`);
+      updateNassauTable();
+    }
+    
+    // Actualizar la tabla de apuestas Nassau
+    function updateNassauTable() {
+      const tbody = document.getElementById('nassauBody');
+      tbody.innerHTML = '';
+      
+      const betAmount = parseFloat(document.getElementById('betAmount').value) || 100;
+      const pressAmount = parseFloat(document.getElementById('pressAmount').value) || 50;
+      
+      // Crear una fila para cada jugador
+      players.forEach((player, playerIdx) => {
+        const row = document.createElement('tr');
+        
+        // Nombre del jugador
+        const nameCell = document.createElement('td');
+        nameCell.textContent = player.name;
+        row.appendChild(nameCell);
+        
+        // Calcular resultados para Front 9, Back 9, y Total 18
+        let frontNineNet = 0, backNineNet = 0, totalNet = 0;
+        let totalMoney = 0;
+        
+        // Front 9
+        const front9Cell = document.createElement('td');
+        frontNineNet = calculateMatchResult(playerIdx, 1, 9);
+        front9Cell.textContent = formatScore(frontNineNet);
+        front9Cell.className = frontNineNet > 0 ? 'positive-score' : (frontNineNet < 0 ? 'negative-score' : '');
+        totalMoney += frontNineNet * betAmount;
+        row.appendChild(front9Cell);
+        
+        // Back 9
+        const back9Cell = document.createElement('td');
+        backNineNet = calculateMatchResult(playerIdx, 10, 18);
+        back9Cell.textContent = formatScore(backNineNet);
+        back9Cell.className = backNineNet > 0 ? 'positive-score' : (backNineNet < 0 ? 'negative-score' : '');
+        totalMoney += backNineNet * betAmount;
+        row.appendChild(back9Cell);
+        
+        // Total 18
+        const total18Cell = document.createElement('td');
+        totalNet = calculateMatchResult(playerIdx, 1, 18);
+        total18Cell.textContent = formatScore(totalNet);
+        total18Cell.className = totalNet > 0 ? 'positive-score' : (totalNet < 0 ? 'negative-score' : '');
+        totalMoney += totalNet * betAmount;
+        row.appendChild(total18Cell);
+        
+        // Presses
+        const pressesCell = document.createElement('td');
+        const pressResult = calculatePressesResult(playerIdx);
+        pressesCell.textContent = formatScore(pressResult);
+        pressesCell.className = pressResult > 0 ? 'positive-score' : (pressResult < 0 ? 'negative-score' : '');
+        totalMoney += pressResult * pressAmount;
+        row.appendChild(pressesCell);
+        
+        // Total dinero
+        const moneyCell = document.createElement('td');
+        moneyCell.textContent = `$${totalMoney.toLocaleString()}`;
+        moneyCell.className = totalMoney > 0 ? 'positive-score' : (totalMoney < 0 ? 'negative-score' : '');
+        row.appendChild(moneyCell);
+        
+        tbody.appendChild(row);
+      });
+    }
+    
+    // Calcular resultado de un segmento (Front 9, Back 9 o Total 18)
+    function calculateMatchResult(playerIdx, startHole, endHole) {
+      let result = 0;
+      
+      // Comparar con cada otro jugador
+      for (let i = 0; i < players.length; i++) {
+        if (i === playerIdx) continue;
+        
+        let playerScore = 0;
+        let opponentScore = 0;
+        
+        // Sumar puntos netos solo para los hoyos jugados
+        for (let hole = startHole; hole <= endHole; hole++) {
+          if (hole <= currentHole && players[playerIdx].net[hole-1] !== undefined && players[i].net[hole-1] !== undefined) {
+            if (players[playerIdx].net[hole-1] < players[i].net[hole-1]) {
+              playerScore++;
+            } else if (players[playerIdx].net[hole-1] > players[i].net[hole-1]) {
+              opponentScore++;
+            }
+          }
+        }
+        
+        // Determinar resultado (positivo si gana, negativo si pierde)
+        if (playerScore > opponentScore) {
+          result++;
+        } else if (playerScore < opponentScore) {
+          result--;
+        }
+      }
+      
+      return result;
+    }
+    
+    // Calcular resultado de los presses
+    function calculatePressesResult(playerIdx) {
+      let result = 0;
+      
+      // Revisar todos los presses que involucran a este jugador
+      presses.forEach(press => {
+        if (!press.active || press.type === 'front9' || press.type === 'back9' || press.type === 'total18') {
+          return; // Ignorar Nassau base y presses inactivos
+        }
+        
+        if (press.player1 === playerIdx || press.player2 === playerIdx) {
+          const isPlayer1 = press.player1 === playerIdx;
+          const otherPlayerIdx = isPlayer1 ? press.player2 : press.player1;
+          
+          let playerScore = 0;
+          let opponentScore = 0;
+          
+          // Contar solo hoyos jugados dentro del rango del press
+          for (let hole = press.holeStart; hole <= press.holeEnd; hole++) {
+            if (hole <= currentHole && players[playerIdx].net[hole-1] !== undefined && players[otherPlayerIdx].net[hole-1] !== undefined) {
+              if (players[playerIdx].net[hole-1] < players[otherPlayerIdx].net[hole-1]) {
+                playerScore++;
+              } else if (players[playerIdx].net[hole-1] > players[otherPlayerIdx].net[hole-1]) {
+                opponentScore++;
+              }
+            }
+          }
+          
+          // Determinar resultado
+          if (playerScore > opponentScore) {
+            result++;
+          } else if (playerScore < opponentScore) {
+            result--;
+          }
+        }
+      });
+      
+      return result;
+    }
+    
+    // Formatear un valor de puntuación
+    function formatScore(score) {
+      if (score > 0) return `+${score}`;
+      return score.toString();
+    }
+    
+    // Iniciar con un formulario para 4 jugadores por defecto
+    window.onload = function() {
+      for (let i = 0; i < 4; i++) {
+        addPlayer();
+      }
+    };
+  </script>
+</body>
+</html>
