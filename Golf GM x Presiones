@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sistema Apuestas por Presiones GEMA</title>
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <style>
+    :root{--bg:#0b1220;--card:#111a2b;--muted:#9fb2d1;--accent:#38bdf8;--ok:#10b981;--bad:#ef4444}
+    html,body{margin:0;padding:0;background:var(--bg);color:#fff;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial}
+    .wrap{max-width:960px;margin:0 auto;padding:16px}
+    h1{font-size:20px;margin:0 0 8px}
+    p{color:var(--muted);margin:0 0 12px}
+    .card{background:var(--card);border-radius:14px;padding:14px;margin:12px 0;box-shadow:0 0 0 1px rgba(255,255,255,0.04) inset}
+    .row{display:grid;grid-template-columns:1fr 90px 130px 90px;gap:8px;align-items:center;margin:6px 0}
+    .row input,.row select{width:100%;padding:10px 10px;border-radius:10px;border:1px solid #22304b;background:#0d1626;color:#fff}
+    .btn{background:var(--accent);border:0;color:#002134;padding:10px 14px;border-radius:10px;cursor:pointer;font-weight:600}
+    .btn:disabled{opacity:.5;cursor:not-allowed}
+    .grid{overflow:auto}
+    table{width:100%;border-collapse:collapse}
+    th,td{border-bottom:1px solid #24324d;padding:8px;text-align:center;font-variant-numeric:tabular-nums}
+    th{position:sticky;top:0;background:#0f1a2e;z-index:1}
+    .scoreboard{margin:12px 0}
+    .pill{display:inline-block;padding:2px 8px;border-radius:999px;background:#0d1626;border:1px solid #2a3d5f;color:#9fb2d1}
+    .flex{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    .muted{color:var(--muted)}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Sistema Apuestas por Presiones GEMA</h1>
+    <p>Registra golpes, calcula presiones por hoyo (alta/baja), totales por jugador y soporta 3–5 jugadores. Las presiones se reinician al pasar a la segunda vuelta.</p>
+
+    <div class="card" id="setup">
+      <h3>Agregar jugadores</h3>
+      <div class="flex" style="margin:8px 0 4px">
+        <label for="startHole"><span class="pill">Inicio de la ronda</span></label>
+        <select id="startHole">
+          <option value="1" selected>Hoyo 1</option>
+          <option value="10">Hoyo 10</option>
+        </select>
+        <span class="muted">(Las presiones se reinician al terminar la primera vuelta jugada)</span>
+      </div>
+      <div id="players"></div>
+      <div class="flex" style="margin-top:8px">
+        <button class="btn" id="startBtn" type="button">Iniciar Ronda</button>
+        <span class="muted">Ingresa 3–5 jugadores</span>
+      </div>
+    </div>
+
+    <div class="card" id="board" style="display:none">
+      <div class="flex" style="justify-content:space-between">
+        <div class="flex">
+          <button class="btn" id="calcBtn" type="button">Calcular resultados</button>
+          <button class="btn" id="resetBtn" type="button" style="background:#334155;color:#fff">Reiniciar</button>
+        </div>
+        <div class="muted" id="orderInfo"></div>
+      </div>
+      <div class="grid" id="scoreGrid"></div>
+    </div>
+
+    <div class="card" id="results" style="display:none">
+      <h3>Resultados</h3>
+      <div id="matchesOut"></div>
+      <div id="totalsSection" style="margin-top:14px;display:none">
+        <h3>Resumen de golpes por jugador</h3>
+        <div id="playerTotals"></div>
+      </div>
+    </div>
+  </div>
+
+<script>
+// ===== Datos del campo: Club Campestre de Chihuahua =====
+const course = [
+  {h:1,  par:4,  siW:5,  siY:7},
+  {h:2,  par:3,  siW:15, siY:17},
+  {h:3,  par:4,  siW:1,  siY:5},
+  {h:4,  par:4,  siW:17, siY:13},
+  {h:5,  par:5,  siW:7,  siY:11},
+  {h:6,  par:4,  siW:3,  siY:3},
+  {h:7,  par:3,  siW:13, siY:15},
+  {h:8,  par:4,  siW:9,  siY:1},
+  {h:9,  par:5,  siW:11, siY:9},
+  {h:10, par:3,  siW:16, siY:14},
+  {h:11, par:4,  siW:8,  siY:10},
+  {h:12, par:4,  siW:4,  siY:12},
+  {h:13, par:4,  siW:14, siY:16},
+  {h:14, par:5,  siW:12, siY:6},
+  {h:15, par:3,  siW:18, siY:18},
+  {h:16, par:4,  siW:6,  siY:8},
+  {h:17, par:4,  siW:10, siY:4},
+  {h:18, par:5,  siW:2,  siY:2},
+];
+
+// ===== Estado global =====
+let players = []; // {name,hcap,tee}
+let playOrder = [...Array(18).keys()].map(i=>i+1); // [1..18]
+let holeIdxByRow = [...Array(18).keys()];          // [0..17]
+
+function el(tag, attrs={}, html=''){
+  const e=document.createElement(tag);
+  for(const k in attrs){
+    if(k==='class') e.className=attrs[k];
+    else if(k==='style') e.setAttribute('style', attrs[k]);
+    else e.setAttribute(k, attrs[k]);
+  }
+  if(html) e.innerHTML=html;
+  return e;
+}
+
+// ===== UI: filas de jugadores (siempre 5, iOS-friendly) =====
+const playersBox = document.getElementById('players');
+for(let i=0;i<5;i++){
+  const row = el('div',{class:'row'});
+  row.innerHTML = `
+    <input class="pname" placeholder="Nombre" />
+    <input type="number" class="phcap" placeholder="Hándicap" min="0" />
+    <select class="ptee">
+      <option value="white">Blancas</option>
+      <option value="yellow">Amarillas</option>
+    </select>
+    <button class="btn delBtn" type="button" style="background:#334155;color:#fff">Eliminar</button>
+  `;
+  row.querySelector('.delBtn').addEventListener('click',()=>{ row.remove(); });
+  playersBox.appendChild(row);
+}
+
+function validPlayers(){
+  const rows = [...document.querySelectorAll('#players .row')];
+  const out=[];
+  for(const r of rows){
+    const name = r.querySelector('.pname').value.trim();
+    const hcap = parseFloat(r.querySelector('.phcap').value);
+    const tee  = r.querySelector('.ptee').value;
+    if(name && Number.isFinite(hcap)) out.push({name,hcap,tee});
+  }
+  return out;
+}
+
+function setOrder(){
+  const v = parseInt(document.getElementById('startHole').value,10);
+  if(v===10){
+    playOrder = [...Array(9).keys()].map(i=>10+i).concat([...Array(9).keys()].map(i=>1+i));
+  }else{
+    playOrder = [...Array(18).keys()].map(i=>1+i);
+  }
+  holeIdxByRow = playOrder.map(n=>n-1);
+  document.getElementById('orderInfo').textContent = `Orden de juego: ${playOrder.join(', ')}`;
+}
+
+// ===== Construir grilla de anotación =====
+function buildGrid(){
+  const grid = document.getElementById('scoreGrid');
+  grid.innerHTML='';
+  const tbl = el('table',{class:'scoreboard'});
+  const thead = el('thead');
+  const trh = el('tr');
+  trh.appendChild(el('th',{},'Hoyo'));
+  trh.appendChild(el('th',{},'Par'));
+  for(const p of players) trh.appendChild(el('th',{},p.name));
+  thead.appendChild(trh); tbl.appendChild(thead);
+  const tb = el('tbody');
+  for(let r=0;r<18;r++){
+    const idx = holeIdxByRow[r];
+    const tr = el('tr');
+    tr.appendChild(el('td',{}, String(course[idx].h)));
+    tr.appendChild(el('td',{}, String(course[idx].par)));
+    for(let j=0;j<players.length;j++){
+      const td = el('td');
+      const inp = el('input',{type:'number',min:'1',style:'width:72px;padding:6px;border-radius:8px;border:1px solid #263a5f;background:#0d1626;color:#fff'});
+      inp.className = 'st st-'+r+'-'+j;
+      td.appendChild(inp); tr.appendChild(td);
+    }
+    tb.appendChild(tr);
+  }
+  tbl.appendChild(tb); grid.appendChild(tbl);
+}
+
+// ===== Utilidades de ventajas =====
+function strokeIndexForHole(idx, tee){ // idx 0..17, return 1..18
+  return tee==='yellow' ? course[idx].siY : course[idx].siW;
+}
+function distributeStrokes(diff, advantagedPlayers){
+  const recv = advantagedPlayers[0];
+  const tee = players[recv].tee;
+  const order = [...Array(18).keys()].sort((a,b)=>strokeIndexForHole(a,tee)-strokeIndexForHole(b,tee));
+  const map = new Map();
+  let remaining = diff, i=0;
+  while(remaining>0){
+    const h = order[i%18];
+    map.set(h,(map.get(h)||0)+1);
+    remaining--; i++;
+  }
+  return map; // Map holeIdx -> strokes
+}
+function pairSum(hcaps, ids){ return ids.map(i=>hcaps[i]).reduce((a,b)=>a+b,0); }
+
+// ===== Calcular resultados =====
+function calculate(){
+  const N = players.length;
+  const strokes = [...Array(18)].map(()=>Array(N).fill(null));
+  let completed = 0;
+  for(let r=0;r<18;r++){
+    let allFilled=true;
+    for(let j=0;j<N;j++){
+      const inp = document.querySelector(`.st-${r}-${j}`);
+      const v = inp && inp.value!=='' ? parseInt(inp.value,10) : null;
+      if(v==null || !Number.isFinite(v) || v<=0) allFilled=false;
+      strokes[r][j] = v;
+    }
+    if(allFilled) completed++; else break;
+  }
+  if(completed===0){
+    alert('Captura al menos el primer hoyo para ver parciales.');
+    return;
+  }
+
+  const idxs = [...Array(N).keys()];
+  idxs.sort((a,b)=>players[a].hcap-players[b].hcap);
+
+  // Definir matches
+  const matches = [];
+  if(N===3){
+    matches.push({A:[idxs[0]], B:[idxs[1]], type:'single'});
+    matches.push({A:[idxs[0]], B:[idxs[2]], type:'single'});
+    matches.push({A:[idxs[1]], B:[idxs[2]], type:'single'});
+  } else if(N===4){
+    matches.push({A:[idxs[0], idxs[3]], B:[idxs[1], idxs[2]], type:'pair'});
+  } else if(N===5){
+    matches.push({A:[idxs[0], idxs[3]], B:[idxs[1], idxs[2]], type:'pair'});
+    matches.push({A:[idxs[0], idxs[3]], B:[idxs[1], idxs[4]], type:'pair'});
+    matches.push({A:[idxs[0], idxs[3]], B:[idxs[2], idxs[4]], type:'pair'});
+  }
+
+  const hcaps = players.map(p=>p.hcap);
+
+  // Ventajas 80% y asignación al jugador con mayor hcap del lado beneficiado (o al más alto en singles)
+  const advByMatch = matches.map(m=>{
+    const sumA = pairSum(hcaps, m.A);
+    const sumB = pairSum(hcaps, m.B);
+    let recvPlayerIndex = null;
+    let strokesMap = new Map();
+    if(m.type==='single'){
+      const diff = Math.max(0, Math.floor( (Math.abs(hcaps[m.A[0]]-hcaps[m.B[0]])*0.8) + 1e-9 ));
+      if(diff>0){
+        const recvIdx = (hcaps[m.A[0]]>hcaps[m.B[0]])? m.A[0] : m.B[0];
+        recvPlayerIndex = recvIdx;
+        strokesMap = distributeStrokes(diff,[recvIdx]);
+      }
+    } else {
+      const diff = Math.max(0, Math.floor( (Math.abs(sumA-sumB)*0.8) + 1e-9 ));
+      if(diff>0){
+        const side = sumA>sumB? m.A : m.B; // lado que recibe
+        const recvIdx = side.slice().sort((i,j)=>hcaps[j]-hcaps[i])[0]; // mayor hcap
+        recvPlayerIndex = recvIdx;
+        strokesMap = distributeStrokes(diff,[recvIdx]);
+      }
+    }
+    return {recvPlayerIndex, strokesMap};
+  });
+
+  function netFor(playerIndex, holeIdx){
+    const r = holeIdxByRow.indexOf(holeIdx);
+    if(r<0) return null;
+    const s = strokes[r][playerIndex];
+    if(s==null) return null;
+    let adj = s;
+    for(let mi=0; mi<matches.length; mi++){
+      const adv = advByMatch[mi];
+      if(adv.recvPlayerIndex===playerIndex){
+        const extra = adv.strokesMap.get(holeIdx) || 0;
+        if(extra>0) adj = adj - extra;
+      }
+    }
+    return adj;
+  }
+
+  // Salida por match (con presiones)
+  const allMatchRows = [];
+  for(let mi=0; mi<matches.length; mi++){
+    const m = matches[mi];
+    const pressDiffs = [0];
+    const rows=[];
+    for(let r=0; r<completed; r++){
+      // Reinicia presiones al terminar 9 hoyos jugados
+      if(r>0 && r%9===0){ pressDiffs.length=0; pressDiffs.push(0); }
+
+      const holeIdx = holeIdxByRow[r];
+      let holeScore = 0;
+      if(m.type==='single'){
+        const a = netFor(m.A[0], holeIdx);
+        const b = netFor(m.B[0], holeIdx);
+        if(a!=null && b!=null){
+          if(a<b) holeScore = +1;
+          else if(b<a) holeScore = -1;
+        }
+      } else { // parejas: baja + alta
+        const aN = m.A.map(pi=>netFor(pi, holeIdx)).filter(v=>v!=null).sort((x,y)=>x-y);
+        const bN = m.B.map(pi=>netFor(pi, holeIdx)).filter(v=>v!=null).sort((x,y)=>x-y);
+        if(aN.length===2 && bN.length===2){
+          let pts = 0;
+          if     (aN[0] < bN[0]) pts += 1; else if (bN[0] < aN[0]) pts -= 1; // baja
+          if     (aN[1] < bN[1]) pts += 1; else if (bN[1] < aN[1]) pts -= 1; // alta
+          holeScore = pts; // -2..+2
+        }
+      }
+
+      const last = pressDiffs.length-1;
+      pressDiffs[last] += holeScore;
+      if(Math.abs(pressDiffs[last])>=2){ pressDiffs.push(0); } // abrir nueva presión
+
+      rows.push({hole:course[holeIdx].h, holeScore, presses:[...pressDiffs]});
+    }
+    allMatchRows.push({m, rows});
+  }
+
+  // Render de resultados
+  const out = document.getElementById('matchesOut');
+  out.innerHTML='';
+  for(const pack of allMatchRows){
+    const {m, rows} = pack;
+    const title = (m.type==='single')
+      ? `${players[m.A[0]].name} vs ${players[m.B[0]].name}`
+      : `${players[m.A[0]].name}+${players[m.A[1]].name} vs ${players[m.B[0]].name}+${players[m.B[1]].name}`;
+
+    const tbl = el('table',{class:'scoreboard'});
+    const thead = el('thead');
+    const trh = el('tr');
+    trh.appendChild(el('th',{},title));
+    trh.appendChild(el('th',{},'Resultado'));
+    trh.appendChild(el('th',{},'Presiones (izq→der)'));
+    thead.appendChild(trh); tbl.appendChild(thead);
+    const tb = el('tbody');
+    for(const r of rows){
+      const tr = el('tr');
+      tr.appendChild(el('td',{}, 'Hoyo '+r.hole));
+      const resTxt = r.holeScore>0? `+${r.holeScore}` : (r.holeScore<0? `${r.holeScore}` : '0');
+      tr.appendChild(el('td',{}, resTxt));
+      tr.appendChild(el('td',{}, r.presses.map(x=>x>0?`+${x}`:String(x)).join(' , ')));
+      tb.appendChild(tr);
+    }
+    tbl.appendChild(tb);
+    out.appendChild(tbl);
+  }
+
+  // Totales por jugador (Front/Back/Total por hoyo real 1–9 y 10–18)
+  renderPlayerTotals(strokes);
+  document.getElementById('totalsSection').style.display='block';
+  document.getElementById('results').style.display='block';
+}
+
+function renderPlayerTotals(strokes){
+  const N = players.length;
+  const acc = [...Array(N)].map(()=>({F:0,B:0,T:0,cF:0,cB:0,cT:0}));
+  for(let r=0;r<18;r++){
+    for(let j=0;j<N;j++){
+      const v = strokes[r][j];
+      if(v==null || !Number.isFinite(v)) continue;
+      const holeIdx = holeIdxByRow[r];
+      const isFront = (holeIdx>=0 && holeIdx<=8);
+      const a = acc[j];
+      a.T += v; a.cT++;
+      if(isFront){ a.F+=v; a.cF++; } else { a.B+=v; a.cB++; }
+    }
+  }
+  let html = '<table class="scoreboard"><thead><tr><th>Jugador</th><th>Front 9</th><th>Back 9</th><th>Total</th></tr></thead><tbody>';
+  for(let j=0;j<N;j++){
+    const p = players[j]; const a = acc[j];
+    const F = a.cF? `${a.F} (${a.cF}h)`:'–';
+    const B = a.cB? `${a.B} (${a.cB}h)`:'–';
+    const T = a.cT? `${a.T} (${a.cT}h)`:'–';
+    html += `<tr><td>${p.name}</td><td>${F}</td><td>${B}</td><td>${T}</td></tr>`;
+  }
+  html += '</tbody></table>';
+  document.getElementById('playerTotals').innerHTML = html;
+}
+
+// ===== Eventos =====
+function start(){
+  players = validPlayers();
+  if(players.length<3 || players.length>5){
+    alert('Ingresa entre 3 y 5 jugadores (nombre y hándicap).');
+    return;
+  }
+  const v = parseInt(document.getElementById('startHole').value,10);
+  if(v===10){
+    playOrder = [...Array(9).keys()].map(i=>10+i).concat([...Array(9).keys()].map(i=>1+i));
+  }else{
+    playOrder = [...Array(18).keys()].map(i=>1+i);
+  }
+  holeIdxByRow = playOrder.map(n=>n-1);
+
+  document.getElementById('setup').style.display='none';
+  document.getElementById('board').style.display='block';
+  document.getElementById('orderInfo').textContent = `Orden de juego: ${playOrder.join(', ')}`;
+  buildGrid();
+}
+document.getElementById('startBtn').addEventListener('click', start);
+document.getElementById('startBtn').addEventListener('touchstart', (e)=>{e.preventDefault(); start();});
+document.getElementById('calcBtn').addEventListener('click', calculate);
+document.getElementById('calcBtn').addEventListener('touchstart', (e)=>{e.preventDefault(); calculate();});
+document.getElementById('resetBtn').addEventListener('click', ()=>{ location.reload(); });
+</script>
+</body>
+</html>
